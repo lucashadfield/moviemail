@@ -1,0 +1,9 @@
+# previously fetched movies are archived
+archive_path = "/home/lucas/.config/moviemail/archive.json"
+api_key = "<TMDB API KEY>"
+
+# list director by id on themoviedb.org
+# name is needed to avoid a second API call
+[directors]
+14597 = "Gaspar Noé"
+224 = "David Cronenberg"
