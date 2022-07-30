@@ -69,12 +69,13 @@ async fn main() {
         .into_iter()
         .map(|d| fetch_director_credits(d.0, d.1, &config.api_key));
 
-    // collect results and filter to just directing roles
+    // collect results and filter to just directing roles and movies with release dates
     let movies: Vec<Movie> = join_all(movie_futures)
         .await
         .into_iter()
         .flatten()
         .filter(|m| m.job == Some("Director".to_string()))
+        .filter(|m| m.release_date != "".to_string())
         .collect();
 
     // write all movies to archive file
