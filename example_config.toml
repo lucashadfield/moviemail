@@ -2,6 +2,14 @@
 archive_path = "/home/lucas/.config/moviemail/archive.json"
 api_key = "<TMDB API KEY>"
 
+# email config
+to = "to@email.com"
+from = "Movie Mail <from@email.com>"
+subject = "New Movie"
+username = "from@email.com"
+password = "<SMTP PASSWORD>"
+smtp = "smtp.gmail.com"
+
 # list director by id on themoviedb.org
 # name is needed to avoid a second API call
 [directors]
