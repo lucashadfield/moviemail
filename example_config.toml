@@ -1,3 +1,5 @@
+dry_run = false
+
 # previously fetched movies are archived
 archive_path = "/home/lucas/.config/moviemail/archive.json"
 api_key = "<TMDB API KEY>"

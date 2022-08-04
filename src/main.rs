@@ -9,6 +9,7 @@ use lettre::{Message, SmtpTransport, Transport};
 #[derive(Deserialize)]
 struct Config {
     archive_path: String,
+    dry_run: bool,
     api_key: String,
     to: String,
     from: String,
@@ -114,17 +115,23 @@ async fn main() {
         .collect();
 
     if new_movies.len() > 0 {
-        let email = create_email(new_movies, config.to, config.from, config.subject);
-        let creds = Credentials::new(config.username, config.password);
+        if config.dry_run {
+            for movie in new_movies {
+                println!("{:?}, {:?}, {:?}", movie.title, movie.director_name.unwrap(), movie.release_date)
+            }
+        } else {
+            let email = create_email(new_movies, config.to, config.from, config.subject);
+            let creds = Credentials::new(config.username, config.password);
 
-        let mailer = SmtpTransport::relay(&*config.smtp)
-            .unwrap()
-            .credentials(creds)
-            .build();
+            let mailer = SmtpTransport::relay(&*config.smtp)
+                .unwrap()
+                .credentials(creds)
+                .build();
 
-        match mailer.send(&email) {
-            Ok(_) => println!("Email sent successfully!"),
-            Err(e) => panic!("Could not send email: {:?}", e),
+            match mailer.send(&email) {
+                Ok(_) => println!("Email sent successfully!"),
+                Err(e) => panic!("Could not send email: {:?}", e),
+            }
         }
     } else {
         println!("No new movies")
