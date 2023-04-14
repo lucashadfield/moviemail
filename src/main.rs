@@ -5,6 +5,7 @@ use serde_derive::{Deserialize, Serialize};
 use futures::future::join_all;
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{Message, SmtpTransport, Transport};
+use lettre::message::MultiPart;
 
 #[derive(Deserialize)]
 struct Config {
@@ -29,6 +30,13 @@ struct Movie {
     release_date: String,
     job: Option<String>,
     director_name: Option<String>,
+    imdb_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct MovieDetails {
+    imdb_id: Option<String>,
+    runtime: Option<u32>,
 }
 
 #[derive(Deserialize)]
@@ -56,6 +64,7 @@ fn write_archive(movies: &Vec<Movie>, path: &str) {
 }
 
 async fn fetch_director_credits(director_id: String, director_name: String, api_key: &String) -> Vec<Movie> {
+    // https://developers.themoviedb.org/3/people/get-person-movie-credits
     let url = format!("https://api.themoviedb.org/3/person/{director_id}/movie_credits?api_key={api_key}&language=en-US");
     let resp = reqwest::get(url).await.expect("error fetching from tmdb").text().await.unwrap();
     let mut credits: Credits = serde_json::from_str(&*resp).expect("error deserializing movie credits");
@@ -67,22 +76,43 @@ async fn fetch_director_credits(director_id: String, director_name: String, api_
     return credits.crew;
 }
 
-fn create_message_body(movies: Vec<Movie>) -> String {
-    let mut message = String::new();
+async fn fetch_movie_details(movie_id: u32, api_key: &String) -> MovieDetails {
+    // https://developers.themoviedb.org/3/movies/get-movie-details
+    let url = format!("https://api.themoviedb.org/3/movie/{movie_id}?api_key={api_key}&language=en-US");
+    let resp = reqwest::get(url).await.expect("error fetching from tmdb").text().await.unwrap();
+    let movie_details: MovieDetails = serde_json::from_str(&*resp).expect("error deserializing movie details");
+    return movie_details;
+}
+
+fn create_message_body(movies: Vec<Movie>) -> (String, String) {
+    let mut message_plain = String::new();
+    let mut message_html = String::new();
     for movie in movies {
         let title = movie.title;
         let director = movie.director_name.unwrap();
-        message.push_str(&*format!("{title} - {director}\n"));
+
+        let link = match movie.imdb_id {
+            Some(imdb_id) => { format!("https://www.imdb.com/title/{}", imdb_id) }
+            None => { format!("https://www.themoviedb.org/movie/{}", movie.id) }
+        };
+
+        message_plain.push_str(&*format!("{} - {} - {}\n", link, title, director));
+        message_html.push_str(&*format!("<p><a href=\"{}\">{} - {}</a></p>", link, title, director));
     }
-    return message;
+    return (message_plain, message_html);
 }
 
 fn create_email(movies: Vec<Movie>, to: String, from: String, subject: String) -> Message {
+    let (plain, html) = create_message_body(movies);
+
     return Message::builder()
         .to(to.parse().unwrap())
         .from(from.parse().unwrap())
         .subject(subject)
-        .body(create_message_body(movies))
+        .multipart(MultiPart::alternative_plain_html(
+            plain,
+            html
+        ))
         .unwrap();
 }
 
@@ -98,26 +128,50 @@ async fn main() {
         .into_iter()
         .map(|d| fetch_director_credits(d.0, d.1, &config.api_key));
 
-    // collect results and filter to just directing roles and movies with release dates
-    let movies: Vec<Movie> = join_all(movie_futures)
+    // collect results and filter to just directing roles and movies with release dates later than 2023
+    let mut movies: HashMap<u32, Movie> = join_all(movie_futures)
         .await
         .into_iter()
         .flatten()
         .filter(|m| m.job == Some("Director".to_string()))
         .filter(|m| m.release_date != "".to_string())
+        .map(|m| (m.id, m))
+        // .filter(|m| m.release_date >= "2023-01-01".to_string())
         .collect();
 
     // filter out movies previously archived
-    let new_movies: Vec<Movie> = movies
-        .clone()
-        .into_iter()
+    let mut new_movies: Vec<Movie> = movies
+        .values()
+        .cloned()
         .filter(|m| !archive_set.contains(&m.id))
         .collect();
+
+    // get details for new_movies and store in HashMap
+    let mut invalid_new_movies: HashSet<u32> = HashSet::new();
+    for movie in &mut new_movies {
+        let details = fetch_movie_details(movie.id, &config.api_key).await;
+        let runtime = details.runtime.unwrap_or(0);
+
+        if runtime == 0 {
+            // remove from movies
+            movies.remove(&movie.id);
+        }
+        if runtime < 60 {
+            // remove from new_movies
+            invalid_new_movies.insert(movie.id);
+        } else {
+            // update new_movies with imdb_id
+            movie.imdb_id = details.imdb_id.clone();
+        }
+    }
+
+    // remove invalid movies from new_movies
+    new_movies = new_movies.into_iter().filter(|m| !invalid_new_movies.contains(&m.id)).collect();
 
     if new_movies.len() > 0 {
         if config.dry_run {
             for movie in new_movies {
-                println!("{:?}, {:?}, {:?}", movie.title, movie.director_name.unwrap(), movie.release_date)
+                println!("{:?}, {:?}, {:?}, {:?}", movie.title, movie.director_name.unwrap(), movie.release_date, movie.imdb_id.unwrap_or("".to_string()));
             }
         } else {
             let email = create_email(new_movies, config.to, config.from, config.subject);
@@ -138,5 +192,5 @@ async fn main() {
     }
 
     // write all movies to archive file
-    write_archive(&movies, &config.archive_path);
+    write_archive(&movies.values().cloned().collect(), &config.archive_path);
 }
