@@ -139,6 +139,7 @@ async fn main() {
 
     // for each director call tmdb async
     let movie_futures = config.directors
+        .clone()
         .into_iter()
         .map(|d| fetch_director_credits(d.0, d.1, &config.api_key));
 
@@ -152,7 +153,7 @@ async fn main() {
         .map(|m| (m.id, m))
         .collect();
 
-    info!("found {} movies", movies.len());
+    info!("found {} movies from {} directors", movies.len(), config.directors.len());
 
     // filter out movies previously archived
     let mut new_movies: Vec<Movie> = movies
@@ -169,21 +170,32 @@ async fn main() {
         let details = fetch_movie_details(movie.id, &config.api_key).await;
         let runtime = details.runtime.unwrap_or(0);
 
+        // if no imdb, ignore it
+        match details.imdb_id {
+            Some(imdb_id) => { movie.imdb_id = Some(imdb_id); }
+            None => {
+                movies.remove(&movie.id);
+                invalid_new_movies.insert(movie.id);
+                continue;
+            }
+        }
+
         if runtime == 0 {
             // remove from movies
             movies.remove(&movie.id);
         }
+
         if runtime < 60 {
             // remove from new_movies
             invalid_new_movies.insert(movie.id);
-        } else {
-            // update new_movies with imdb_id
-            movie.imdb_id = details.imdb_id.clone();
         }
     }
 
     // remove invalid movies from new_movies
-    new_movies = new_movies.into_iter().filter(|m| !invalid_new_movies.contains(&m.id)).collect();
+    new_movies = new_movies
+        .into_iter()
+        .filter(|m| !invalid_new_movies.contains(&m.id))
+        .collect();
 
     info!("{} valid new movies", new_movies.len());
 
