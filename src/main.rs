@@ -6,6 +6,8 @@ use futures::future::join_all;
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{Message, SmtpTransport, Transport};
 use lettre::message::MultiPart;
+use shellexpand::tilde;
+use log::info;
 
 #[derive(Deserialize)]
 struct Config {
@@ -65,6 +67,10 @@ fn write_archive(movies: &Vec<Movie>, path: &str) {
 
 async fn fetch_director_credits(director_id: String, director_name: String, api_key: &String) -> Vec<Movie> {
     // https://developers.themoviedb.org/3/people/get-person-movie-credits
+
+    // add logging
+
+
     let url = format!("https://api.themoviedb.org/3/person/{director_id}/movie_credits?api_key={api_key}&language=en-US");
     let resp = reqwest::get(url).await.expect("error fetching from tmdb").text().await.unwrap();
     let mut credits: Credits = serde_json::from_str(&*resp).expect("error deserializing movie credits");
@@ -119,8 +125,16 @@ fn create_email(movies: Vec<Movie>, to: String, from: String, subject: String) -
 
 #[tokio::main]
 async fn main() {
-    let config = read_config("/home/lucas/.config/moviemail/config.toml");
-    let archive = read_archive(&config.archive_path);
+    let env = env_logger::Env::default().filter_or("LOG_LEVEL", "info");
+    env_logger::init_from_env(env);
+
+    let config_path = &tilde("~/.config/moviemail/config.toml");
+    info!("reading config from {}", config_path);
+    let config = read_config(&config_path);
+
+    let archive_path = &tilde(&config.archive_path);
+    info!("reading archive from {}", archive_path);
+    let archive = read_archive(&archive_path);
     let archive_set: HashSet<u32> = archive.into_iter().map(|a| a.id).collect();
 
     // for each director call tmdb async
@@ -136,8 +150,9 @@ async fn main() {
         .filter(|m| m.job == Some("Director".to_string()))
         .filter(|m| m.release_date != "".to_string())
         .map(|m| (m.id, m))
-        // .filter(|m| m.release_date >= "2023-01-01".to_string())
         .collect();
+
+    info!("found {} movies", movies.len());
 
     // filter out movies previously archived
     let mut new_movies: Vec<Movie> = movies
@@ -145,6 +160,8 @@ async fn main() {
         .cloned()
         .filter(|m| !archive_set.contains(&m.id))
         .collect();
+
+    info!("{} unfiltered new movies", new_movies.len());
 
     // get details for new_movies and store in HashMap
     let mut invalid_new_movies: HashSet<u32> = HashSet::new();
@@ -168,12 +185,15 @@ async fn main() {
     // remove invalid movies from new_movies
     new_movies = new_movies.into_iter().filter(|m| !invalid_new_movies.contains(&m.id)).collect();
 
+    info!("{} valid new movies", new_movies.len());
+
     if new_movies.len() > 0 {
         if config.dry_run {
             for movie in new_movies {
                 println!("{:?}, {:?}, {:?}, {:?}", movie.title, movie.director_name.unwrap(), movie.release_date, movie.imdb_id.unwrap_or("".to_string()));
             }
         } else {
+            info!("preparing email");
             let email = create_email(new_movies, config.to, config.from, config.subject);
             let creds = Credentials::new(config.username, config.password);
 
@@ -183,14 +203,12 @@ async fn main() {
                 .build();
 
             match mailer.send(&email) {
-                Ok(_) => println!("Email sent successfully!"),
+                Ok(_) => info!("email sent successfully!"),
                 Err(e) => panic!("Could not send email: {:?}", e),
             }
         }
-    } else {
-        println!("No new movies")
     }
 
     // write all movies to archive file
-    write_archive(&movies.values().cloned().collect(), &config.archive_path);
+    write_archive(&movies.values().cloned().collect(), &archive_path);
 }
