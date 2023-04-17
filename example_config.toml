@@ -1,3 +1,6 @@
+# save to `~/.config/moviemail/config.toml`
+
+# print new movies instead of sending email
 dry_run = false
 
 # previously fetched movies are archived
