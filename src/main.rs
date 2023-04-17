@@ -67,10 +67,6 @@ fn write_archive(movies: &Vec<Movie>, path: &str) {
 
 async fn fetch_director_credits(director_id: String, director_name: String, api_key: &String) -> Vec<Movie> {
     // https://developers.themoviedb.org/3/people/get-person-movie-credits
-
-    // add logging
-
-
     let url = format!("https://api.themoviedb.org/3/person/{director_id}/movie_credits?api_key={api_key}&language=en-US");
     let resp = reqwest::get(url).await.expect("error fetching from tmdb").text().await.unwrap();
     let mut credits: Credits = serde_json::from_str(&*resp).expect("error deserializing movie credits");
