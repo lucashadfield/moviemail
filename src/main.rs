@@ -37,6 +37,7 @@ struct Movie {
 
 #[derive(Deserialize)]
 struct MovieDetails {
+    id: u32,
     imdb_id: Option<String>,
     runtime: Option<u32>,
 }
@@ -133,6 +134,8 @@ async fn main() {
     let archive = read_archive(&archive_path);
     let archive_set: HashSet<u32> = archive.into_iter().map(|a| a.id).collect();
 
+    info!("loaded {} movies from archive", archive_set.len());
+
     // for each director call tmdb async
     let movie_futures = config.directors
         .clone()
@@ -149,7 +152,7 @@ async fn main() {
         .map(|m| (m.id, m))
         .collect();
 
-    info!("found {} movies from {} directors", movies.len(), config.directors.len());
+    info!("fetched {} movies from {} directors", movies.len(), config.directors.len());
 
     // filter out movies previously archived
     let mut new_movies: Vec<Movie> = movies
@@ -160,15 +163,27 @@ async fn main() {
 
     info!("{} unfiltered new movies", new_movies.len());
 
+    // get details for new_movies and store async
+    let movie_details_futures = new_movies
+        .clone()
+        .into_iter()
+        .map(|m| fetch_movie_details(m.id, &config.api_key));
+
+    let movie_details: HashMap<u32, MovieDetails> = join_all(movie_details_futures)
+        .await
+        .into_iter()
+        .map(|m| (m.id, m))
+        .collect();
+
     // get details for new_movies and store in HashMap
     let mut invalid_new_movies: HashSet<u32> = HashSet::new();
     for movie in &mut new_movies {
-        let details = fetch_movie_details(movie.id, &config.api_key).await;
+        let details = movie_details.get(&movie.id).unwrap();
         let runtime = details.runtime.unwrap_or(0);
 
         // if no imdb, ignore it
-        match details.imdb_id {
-            Some(imdb_id) => { movie.imdb_id = Some(imdb_id); }
+        match &details.imdb_id {
+            Some(imdb_id) => { movie.imdb_id = Some(imdb_id.clone()); }
             None => {
                 movies.remove(&movie.id);
                 invalid_new_movies.insert(movie.id);
@@ -218,5 +233,6 @@ async fn main() {
     }
 
     // write all movies to archive file
+    info!("writing {} movies to archive", movies.len());
     write_archive(&movies.values().cloned().collect(), &archive_path);
 }
